@@ -1,53 +1,48 @@
-import { Client } from "./client";
-import { defaultConfig, WMConfig } from "./config";
-import { LayoutEngine } from "./layout";
-import { Workspace } from "./workspace";
-import { XClient, XDisplay, XEvent } from "./types/client";
-import { KeybindManager, KeyBinding } from "./keybind";
 import * as x11 from "@berstend/node-x11-typescript";
-import { spawn } from "child_process";
+import { defaultConfig, WMConfig } from "./config";
+import { ClientModel } from "./models/client";
+import { WorkspaceModel } from "./models/workspace";
+import { LayoutService } from "./services/layout.service";
+import { KeybindService, KeyBinding } from "./services/keybind.service";
+import { ProcessService } from "./services/process.service";
+import { XClient, XDisplay, XEvent } from "./types/client";
 
 export class WindowManager {
-  private x11: typeof x11;
-  private X: XClient;
-  private root: number;
-  private screenWidth: number;
-  private screenHeight: number;
-  private config: WMConfig;
-  private layoutEngine: LayoutEngine;
-  private keybindings: KeyBinding[] = [];
-  public clients: Client[] = [];
+  private readonly x11: typeof x11;
+  private readonly X: XClient;
+  private readonly root: number;
+  private readonly screenWidth: number;
+  private readonly screenHeight: number;
+  private readonly config: WMConfig;
+  private readonly layoutService: LayoutService;
+  private readonly keybindings: KeyBinding[];
 
-  public workspaces: Workspace[] = [];
-  public currentWorkspaceIndex: number = 0;
+  public readonly workspaces: WorkspaceModel[] = [];
+  public currentWorkspaceIndex = 0;
+
+  private isSuperPressed = false;
+  private isAltPressed = false;
+  private isShiftPressed = false;
 
   constructor(x11Client: typeof x11, display: XDisplay) {
     this.x11 = x11Client;
-    if (!display.client) {
-      throw new Error("Display client is undefined");
-    }
+    if (!display.client) throw new Error("Display client undefined");
+
     this.X = display.client;
     const screen = display.screen[0];
     this.root = screen.root;
     this.screenWidth = screen.pixel_width;
     this.screenHeight = screen.pixel_height;
     this.config = defaultConfig;
-    this.layoutEngine = new LayoutEngine();
-    this.keybindings = KeybindManager.getBindings();
+    this.layoutService = new LayoutService();
+    this.keybindings = KeybindService.getBindings();
 
-    // Default workspace initialization (0..8)
     for (let i = 0; i < 9; i++) {
-      this.workspaces.push(new Workspace(i));
+      this.workspaces.push(new WorkspaceModel(i));
     }
   }
 
-  private isSuperPressed = false;
-  private isAltPressed = false;
-  private isShiftPressed = false;
-
   public init(): void {
-    console.log("[beanwm] Registering SubstructureRedirect, KeyPress & KeyRelease on Root Window...");
-
     const eventMask =
       this.x11.eventMask.SubstructureRedirect |
       this.x11.eventMask.SubstructureNotify |
@@ -57,22 +52,18 @@ export class WindowManager {
 
     this.X.ChangeWindowAttributes?.(this.root, { eventMask });
     this.grabKeybindings();
-    console.log("[beanwm] Window Manager & Keybindings active!");
-
     this.setupEvents();
   }
 
   private grabKeybindings(): void {
     for (const kb of this.keybindings) {
-      // GrabKey(wid, ownerEvents, modifiers, keycode, pointerMode, keyboardMode)
-      // Grab with specified modifier as well as 0 modifier so Xephyr unmapped modifiers work
       this.X.GrabKey?.(this.root, true, kb.mod, kb.keycode, 1, 1);
       this.X.GrabKey?.(this.root, true, 0, kb.keycode, 1, 1);
     }
   }
 
   private setupEvents(): void {
-    this.X.on("event", (ev: XEvent & { keycode?: number; state?: number }) => {
+    this.X.on("event", (ev: XEvent) => {
       const winId = ev.wid ?? ev.window;
 
       if (ev.name === "KeyPress" && ev.keycode !== undefined) {
@@ -85,52 +76,30 @@ export class WindowManager {
         if (ev.keycode === 64 || ev.keycode === 108) this.isAltPressed = false;
         if (ev.keycode === 50 || ev.keycode === 62) this.isShiftPressed = false;
       } else if (ev.name === "MapRequest" && winId) {
-        console.log(`[beanwm] MapRequest received for window ${winId}`);
         this.handleMapRequest(winId);
       } else if ((ev.name === "DestroyNotify" || ev.name === "UnmapNotify") && winId) {
-        console.log(`[beanwm] Unmap/Destroy received for window ${winId}`);
         this.handleUnmap(winId);
-      } else if (ev.name === "ConfigureRequest" && winId) {
-        // Acknowledge ConfigureRequest without manually re-sending invalid stack/sibling properties
-        console.log(`[beanwm] ConfigureRequest for window ${winId}`);
       }
     });
   }
 
   private handleKeyPress(keycode: number, state: number): void {
-    // Ignore pure modifier presses
     if (keycode === 133 || keycode === 134 || keycode === 64 || keycode === 108 || keycode === 50 || keycode === 62) return;
 
-    // Clean state by masking out Lock (2) and NumLock (16)
     let cleanState = state & ~(2 | 16);
+    if (this.isAltPressed) cleanState |= 8;
+    if (this.isSuperPressed) cleanState |= 64;
+    if (this.isShiftPressed) cleanState |= 1;
 
-    // Inject manual modifier state if Xephyr didn't include it in state
-    if (this.isAltPressed) {
-      cleanState |= 8; // MOD_ALT (Mod1)
-    }
-    if (this.isSuperPressed) {
-      cleanState |= 64; // MOD_SUPER (Mod4)
-    }
-    if (this.isShiftPressed) {
-      cleanState |= 1; // Shift mask bit
-    }
-
-    console.log(`[beanwm] [DEBUG KEYPRESS] Raw keycode: ${keycode}, Raw state: ${state}, Effective state: ${cleanState}`);
     const binding = this.keybindings.find((k) => k.keycode === keycode && k.mod === cleanState);
-    if (binding) {
-      console.log(`[beanwm] Keypress triggered: ${binding.description}`);
-      binding.action(this);
-    } else {
-      console.log(`[beanwm] Unhandled keypress: keycode=${keycode}, state=${cleanState}`);
-    }
+    binding?.action(this);
   }
 
   private handleMapRequest(winId: number): void {
     const ws = this.workspaces[this.currentWorkspaceIndex];
-    if (!ws) return;
-    if (ws.clients.some((c) => c.windowId === winId)) return;
+    if (!ws || ws.clients.some((c) => c.windowId === winId)) return;
 
-    const client = new Client(winId, { x: 0, y: 0, width: 400, height: 300 });
+    const client = new ClientModel(winId, { x: 0, y: 0, width: 400, height: 300 });
     ws.addClient(client);
 
     this.X.MapWindow?.(winId);
@@ -139,8 +108,7 @@ export class WindowManager {
 
   private handleUnmap(winId: number): void {
     for (const ws of this.workspaces) {
-      const removed = ws.removeClient(winId);
-      if (removed && ws.id === this.currentWorkspaceIndex) {
+      if (ws.removeClient(winId) && ws.id === this.currentWorkspaceIndex) {
         this.applyCurrentLayout();
         break;
       }
@@ -148,75 +116,40 @@ export class WindowManager {
   }
 
   public switchToWorkspace(targetIndex: number): void {
-    if (targetIndex < 0 || targetIndex >= this.workspaces.length || targetIndex === this.currentWorkspaceIndex) {
-      return;
-    }
+    if (targetIndex < 0 || targetIndex >= this.workspaces.length || targetIndex === this.currentWorkspaceIndex) return;
+
     const oldWs = this.workspaces[this.currentWorkspaceIndex];
     const newWs = this.workspaces[targetIndex];
 
-    for (const c of oldWs.clients) {
-      this.X.UnmapWindow?.(c.windowId);
-    }
-
+    for (const c of oldWs.clients) this.X.UnmapWindow?.(c.windowId);
     this.currentWorkspaceIndex = targetIndex;
+    for (const c of newWs.clients) this.X.MapWindow?.(c.windowId);
 
-    for (const c of newWs.clients) {
-      this.X.MapWindow?.(c.windowId);
-    }
     this.applyCurrentLayout();
-    console.log(`[beanwm] Switched to Workspace ${targetIndex + 1} (${newWs.clients.length} windows active)`);
   }
 
   public moveActiveClientToWorkspace(targetIndex: number): void {
-    if (targetIndex < 0 || targetIndex >= this.workspaces.length || targetIndex === this.currentWorkspaceIndex) {
-      return;
-    }
+    if (targetIndex < 0 || targetIndex >= this.workspaces.length || targetIndex === this.currentWorkspaceIndex) return;
+
     const currentWs = this.workspaces[this.currentWorkspaceIndex];
     const activeClient = currentWs.activeClient;
-
     if (!activeClient) return;
 
     currentWs.removeClient(activeClient.windowId);
     this.X.UnmapWindow?.(activeClient.windowId);
     this.applyCurrentLayout();
 
-    const targetWs = this.workspaces[targetIndex];
-    targetWs.addClient(activeClient);
-
-    console.log(`[beanwm] Moved window ${activeClient.windowId} to Workspace ${targetIndex + 1}`);
+    this.workspaces[targetIndex].addClient(activeClient);
   }
 
   public spawnTerminal(): void {
-    const displayEnv = process.env.DISPLAY || ":2";
-    console.log(`[beanwm] Spawning terminal (${this.config.terminal}) on ${displayEnv}`);
-    
-    // Strip WAYLAND_DISPLAY so Wayland-native apps like Kitty are forced onto Xephyr X11
-    const { WAYLAND_DISPLAY, ...envWithoutWayland } = process.env;
-
-    const child = spawn(this.config.terminal, [], {
-      detached: true,
-      stdio: ["ignore", "inherit", "inherit"],
-      env: {
-        ...envWithoutWayland,
-        DISPLAY: displayEnv,
-        GDK_BACKEND: "x11",
-        QT_QPA_PLATFORM: "xcb",
-        LIBGL_ALWAYS_SOFTWARE: "1",
-        LANG: "C",
-        LC_ALL: "C",
-      },
-    });
-    child.on("error", (err) => {
-      console.error(`[beanwm] Failed to spawn terminal (${this.config.terminal}):`, err.message);
-    });
-    child.unref();
+    ProcessService.spawnProcess(this.config.terminal, process.env.DISPLAY || ":2");
   }
 
   public killActiveClient(): void {
-    const currentWs = this.workspaces[this.currentWorkspaceIndex];
-    if (currentWs.activeClient) {
-      console.log(`[beanwm] Killing window ${currentWs.activeClient.windowId}`);
-      this.X.DestroyWindow?.(currentWs.activeClient.windowId);
+    const activeClient = this.workspaces[this.currentWorkspaceIndex].activeClient;
+    if (activeClient) {
+      this.X.DestroyWindow?.(activeClient.windowId);
     }
   }
 
@@ -224,12 +157,14 @@ export class WindowManager {
     const ws = this.workspaces[this.currentWorkspaceIndex];
     if (!ws) return;
 
-    const layoutMap = ws.layoutEngine.calculateLayout(
+    const layout = this.layoutService.calculateMasterStack(
       ws.clients,
       this.screenWidth,
       this.screenHeight,
+      this.config.gapSize
     );
-    for (const [winId, rect] of layoutMap.entries()) {
+
+    for (const [winId, rect] of layout.entries()) {
       this.X.MoveResizeWindow?.(winId, rect.x, rect.y, rect.width, rect.height);
     }
   }

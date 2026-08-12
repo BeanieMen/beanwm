@@ -1,7 +1,6 @@
 import * as x11 from "@berstend/node-x11-typescript";
 
 type CreateClientCallback = Parameters<typeof x11.createClient>[1];
-
 type CreateClientCallbackArgs = Parameters<CreateClientCallback>;
 
 export type XDisplay = NonNullable<CreateClientCallbackArgs[1]>;
@@ -25,6 +24,6 @@ export interface XEvent {
   width?: number;
   height?: number;
   borderWidth?: number;
-  stackMode?: number;
-  sibling?: number;
+  keycode?: number;
+  state?: number;
 }
