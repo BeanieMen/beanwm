@@ -34,14 +34,14 @@ export class WindowManager {
   }
 
   public init(): void {
-    this.X.ChangeWindowAttributes?.(this.root, {
-      eventMask:
-        this.x11.eventMask.SubstructureRedirect |
-        this.x11.eventMask.SubstructureNotify |
-        this.x11.eventMask.StructureNotify |
-        this.x11.eventMask.KeyPress |
-        this.x11.eventMask.KeyRelease,
-    });
+    const eventMask =
+      this.x11.eventMask.SubstructureRedirect |
+      this.x11.eventMask.SubstructureNotify |
+      this.x11.eventMask.StructureNotify |
+      this.x11.eventMask.KeyPress |
+      this.x11.eventMask.KeyRelease;
+
+    this.X.ChangeWindowAttributes?.(this.root, { eventMask });
 
     for (const { mod, keycode } of this.keybindings) {
       this.X.GrabKey?.(this.root, true, mod, keycode, 1, 1);

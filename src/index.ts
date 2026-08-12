@@ -7,6 +7,10 @@ x11.createClient({}, (err: Error | null, display?: XDisplay) => {
     process.exit(1);
   }
 
+  display.client.on("error", (err: Error) => {
+    console.error("[beanwm] X11 Error (another Window Manager might already be active on this display):", err.message);
+  });
+
   const wm = new WindowManager(x11, display);
   wm.init();
 });
