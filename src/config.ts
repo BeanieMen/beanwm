@@ -13,5 +13,5 @@ export const defaultConfig: WMConfig = {
     focusedBorderColor: 0x89b4fa, // Catppuccin Mocha Blue
     unfocusedBorderColor: 0x45475a, // Dark Gray
     gapSize: 8,
-    terminal: "alacritty",
+    terminal: "xterm",
 };
