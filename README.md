@@ -1,6 +1,6 @@
 # beanwm 
 
-hi lol so basically i was literally losing my mind over standard window managers being super bloated and slow so i built **beanwm** at like 3 am on a high-caffeine hackathon streak with [Hack Club](https://hackclub.com)!! (yeah this lowkey slaps and i actually learned how display servers handle client windows) 🚀✨
+hi lol so basically i was literally losing my mind over standard window managers being super bloated and slow so i built **beanwm** at like 3 am on a high-caffeine!! (yeah this lowkey sucks and i actually learned how display servers handle client windows)
 
 
 ---
