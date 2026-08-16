@@ -46,3 +46,7 @@ this is just a simple app interoping with the x11 display server ig
 - **Protocol**: Native X11 client IPC bindings via `@berstend/node-x11-typescript`
 
 built with <3 by a dumbass developer
+
+## Disclaimer
+AI was used in the making of this project
+
